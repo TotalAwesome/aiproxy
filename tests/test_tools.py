@@ -343,6 +343,56 @@ def test_parse_xml_tool_calls_parameter_tag():
     assert json.loads(calls[0].arguments) == {"city": "Moscow"}
 
 
+def test_parse_xml_tool_calls_parameter_named_like_tool():
+    text = (
+        '<tool_calls><invoke name="read"><parameter name="read">'
+        '<parameter name="filePath">p.py</parameter>'
+        '<parameter name="offset">6530</parameter>'
+        '<parameter name="limit">120</parameter>'
+        "</parameter></invoke></tool_calls>"
+    )
+    parsed = parse_tool_calls(text, {"read": {"filePath": "string", "offset": "integer", "limit": "integer"}})
+    assert parsed is not None
+    calls, _ = parsed
+    assert calls is not None
+    assert len(calls) == 1
+    assert calls[0].name == "read"
+    assert json.loads(calls[0].arguments) == {"filePath": "p.py", "offset": 6530, "limit": 120}
+
+
+def test_parse_xml_tool_calls_element_named_like_tool():
+    text = (
+        '<tool_calls><invoke name="read"><read>'
+        '<parameter name="filePath">p.py</parameter>'
+        '<parameter name="offset">6530</parameter>'
+        "</read></invoke></tool_calls>"
+    )
+    parsed = parse_tool_calls(text, {"read": {"filePath": "string", "offset": "integer"}})
+    assert parsed is not None
+    calls, _ = parsed
+    assert calls is not None
+    assert len(calls) == 1
+    assert calls[0].name == "read"
+    assert json.loads(calls[0].arguments) == {"filePath": "p.py", "offset": 6530}
+
+
+def test_parse_dsml_tool_calls_parameter_named_like_tool():
+    text = (
+        '<|DSML|tool_calls><|DSML|invoke name="read">'
+        '<|DSML|parameter name="read">'
+        '<|DSML|parameter name="filePath">p.py</|DSML|parameter>'
+        '<|DSML|parameter name="offset">6530</|DSML|parameter>'
+        "</|DSML|parameter></|DSML|invoke></|DSML|tool_calls>"
+    )
+    parsed = parse_tool_calls(text, {"read": {"filePath": "string", "offset": "integer"}})
+    assert parsed is not None
+    calls, _ = parsed
+    assert calls is not None
+    assert len(calls) == 1
+    assert calls[0].name == "read"
+    assert json.loads(calls[0].arguments) == {"filePath": "p.py", "offset": 6530}
+
+
 def test_parse_xml_tool_calls_xml_entities():
     text = '<tool_calls><invoke name="bash"><command>echo &quot;a&quot; &amp; b</command></invoke></tool_calls>'
     parsed = parse_tool_calls(text)

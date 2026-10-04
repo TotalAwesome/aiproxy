@@ -22,6 +22,7 @@ from .common import (
     _XML_WRAPPER_CLOSE_RE,
     ToolCall,
     _iter_tool_call_blocks,
+    _unwrap_self_named,
 )
 from .dsml import (
     _DSML_LAX_NAME_ATTR,
@@ -236,6 +237,7 @@ def _parse_xml_tool_calls(text: str, tool_schemas: dict[str, dict[str, Any]] | N
         param_types = _schema_for_name(tool_schemas, tool_name)
         arguments = _xml_tag_attrs(_XML_NAME_ATTR_STRIP_RE.sub("", attrs_text), param_types)
         arguments.update(_xml_invoke_arguments(body, param_types) or {})
+        _unwrap_self_named(arguments, tool_name, param_types)
         calls.append(ToolCall.create(tool_name, arguments))
         blank(start, end)
         consumed.add(start, end)
@@ -298,7 +300,7 @@ def _parse_xml_tool_calls(text: str, tool_schemas: dict[str, dict[str, Any]] | N
                 if raw:
                     pending_name = raw
                 continue
-            if element_name in _ARGS_ALIASES:
+            if element_name in _ARGS_ALIASES or (pending_name is not None and element_name == pending_name.casefold()):
                 container = _xml_invoke_arguments(element_body, None)
                 if isinstance(container, dict) and pending_name:
                     calls.append(ToolCall.create(pending_name, container))
@@ -309,6 +311,7 @@ def _parse_xml_tool_calls(text: str, tool_schemas: dict[str, dict[str, Any]] | N
             param_types = _schema_for_name(tool_schemas, raw_name)
             arguments = _xml_tag_attrs(element_attrs, param_types)
             arguments.update(_xml_invoke_arguments(element_body, param_types) or {})
+            _unwrap_self_named(arguments, raw_name, param_types)
             if param_types is None and isinstance(arguments.get("name"), str) and arguments["name"].strip():
                 raw_name = arguments.pop("name")
                 param_types = _schema_for_name(tool_schemas, raw_name)
@@ -361,6 +364,7 @@ def _parse_xml_tool_calls(text: str, tool_schemas: dict[str, dict[str, Any]] | N
             if param_types and "name" not in param_types:
                 merged.pop("name", None)
             merged.update(_xml_invoke_arguments(element_body, param_types) or {})
+            _unwrap_self_named(merged, tool_name, param_types)
             calls.append(ToolCall.create(tool_name, merged))
             consumed.add(start, end)
             blank(start, end)
@@ -395,6 +399,7 @@ def _parse_xml_tool_calls(text: str, tool_schemas: dict[str, dict[str, Any]] | N
         arguments = _xml_tag_attrs(attrs, param_types)
         if not self_closed:
             arguments.update(_xml_invoke_arguments(body, param_types, False) or {})
+        _unwrap_self_named(arguments, raw_name, param_types)
         if param_types is None and isinstance(arguments.get("name"), str) and arguments["name"].strip():
             raw_name = arguments.pop("name")
             param_types = _schema_for_name(tool_schemas, raw_name)
@@ -638,6 +643,7 @@ def _parse_dsml_tool_calls(text: str, tool_schemas: dict[str, dict[str, Any]] | 
                 parsed = _xml_invoke_arguments(normalized, param_types)
                 if parsed:
                     params = parsed
+            _unwrap_self_named(params, tool_name, param_types)
             calls.append(ToolCall.create(tool_name, params))
     if not calls:
         return None
@@ -705,6 +711,7 @@ def _parse_dsml_lax_tool_calls(text: str, tool_schemas: dict[str, dict[str, Any]
             if index + 1 < len(invokes) and param_start >= invokes[index + 1].start():
                 continue
             _xml_set_param(params_by_call, param_name, _xml_value(param_value, (param_types or {}).get(param_name)))
+        _unwrap_self_named(params_by_call, tool_name, param_types)
         calls.append(ToolCall.create(tool_name, params_by_call))
     if not calls and block_match is not None and params:
         inferred = _infer_tool_name_from_schemas({item[2] for item in params}, tool_schemas)
@@ -713,6 +720,7 @@ def _parse_dsml_lax_tool_calls(text: str, tool_schemas: dict[str, dict[str, Any]
             inferred_params: dict[str, Any] = {}
             for _param_start, _param_end, param_name, param_value in params:
                 inferred_params[param_name] = _xml_value(param_value, (param_types or {}).get(param_name))
+            _unwrap_self_named(inferred_params, inferred, param_types)
             calls.append(ToolCall.create(inferred, inferred_params))
     if not calls:
         return None

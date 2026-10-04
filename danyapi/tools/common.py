@@ -116,6 +116,30 @@ class ToolCall:
         return cls(call_id, name, args_text)
 
 
+def _unwrap_self_named(
+    arguments: dict[str, Any],
+    tool_name: str | None,
+    param_types: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    if not arguments or not tool_name:
+        return arguments
+    target = tool_name.casefold()
+    for key in list(arguments):
+        if not isinstance(key, str) or key.casefold() != target:
+            continue
+        nested = arguments.pop(key)
+        if isinstance(nested, dict):
+            for nested_key, nested_value in nested.items():
+                if nested_key not in arguments:
+                    arguments[nested_key] = nested_value
+        elif param_types is not None and key not in param_types:
+            continue
+        else:
+            arguments[key] = nested
+        break
+    return arguments
+
+
 def _tool_function(tool: Any) -> dict | None:
     if not isinstance(tool, dict):
         return None
