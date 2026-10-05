@@ -16,13 +16,16 @@ from .common import (
     _XML_NAME_ATTR_RE,
     _XML_NAME_ATTR_STRIP_RE,
     _XML_NESTED_RE,
+    _XML_PARAM_ELEMENT_RE,
     _XML_PARAM_RE,
+    _XML_PARAM_TAG_RE,
     _XML_STRAY_TOOL_CLOSE_RE,
     _XML_TOOL_SELFCLOSE_RE,
     _XML_WRAPPER_CLOSE_RE,
     ToolCall,
     _iter_tool_call_blocks,
     _unwrap_self_named,
+    dumps_arguments,
 )
 from .dsml import (
     _DSML_LAX_NAME_ATTR,
@@ -413,10 +416,14 @@ def _parse_xml_tool_calls(text: str, tool_schemas: dict[str, dict[str, Any]] | N
         consumed.add(start, end)
         blank(start, end)
     if not calls:
+        calls.extend(_parse_bare_parameter_calls(text, tool_schemas))
+    if not calls:
         return None, ""
     remainder = _blanked(text, mask)
     remainder = _XML_OPEN_TAG.sub(" ", remainder)
     remainder = _XML_CLOSE_TAG.sub(" ", remainder)
+    remainder = _XML_PARAM_ELEMENT_RE.sub(" ", remainder)
+    remainder = _XML_PARAM_TAG_RE.sub(" ", remainder)
     wrapper = " ".join(remainder.split())
     return calls, wrapper
 
@@ -684,6 +691,86 @@ def _infer_tool_name_from_schemas(param_keys: set[str], tool_schemas: dict[str, 
     return best[1]
 
 
+def _parameter_tags_only(text: str) -> bool:
+    remainder = _XML_PARAM_ELEMENT_RE.sub(" ", text)
+    remainder = _XML_PARAM_TAG_RE.sub(" ", remainder)
+    remainder = _XML_STRAY_TOOL_CLOSE_RE.sub(" ", remainder)
+    remainder = _XML_WRAPPER_OPEN.sub(" ", remainder)
+    remainder = _XML_WRAPPER_CLOSE_RE.sub(" ", remainder)
+    remainder = _XML_OPEN_TAG.sub(" ", remainder)
+    remainder = _XML_CLOSE_TAG.sub(" ", remainder)
+    return not remainder.strip()
+
+
+def _parse_bare_parameter_calls(text: str, tool_schemas: dict[str, dict[str, Any]] | None) -> list[ToolCall]:
+    if not tool_schemas or not _parameter_tags_only(text):
+        return []
+    raw_pairs: list[tuple[str, str]] = []
+    for match in _XML_PARAM_RE.finditer(text):
+        key = match.group(2).strip()
+        if key:
+            raw_pairs.append((key, match.group(3)))
+    if not raw_pairs:
+        return []
+    tool_name: str | None = None
+    for key, raw in raw_pairs:
+        if _schema_for_name(tool_schemas, key) is not None and _XML_NESTED_RE.search(raw.strip()) is not None:
+            tool_name = key
+            break
+    if tool_name is None:
+        tool_name = _infer_tool_name_from_schemas({key for key, _raw in raw_pairs}, tool_schemas)
+        if tool_name is None:
+            return []
+    param_types = _schema_for_name(tool_schemas, tool_name)
+    params: dict[str, Any] = {}
+    seen: set[str] = set()
+    for key, raw in raw_pairs:
+        if key in seen:
+            continue
+        seen.add(key)
+        if key == tool_name:
+            nested = _xml_invoke_arguments(raw, param_types)
+            if isinstance(nested, dict):
+                for nested_key, nested_value in nested.items():
+                    params.setdefault(nested_key, nested_value)
+            continue
+        params[key] = _xml_value(raw, (param_types or {}).get(key))
+    _unwrap_self_named(params, tool_name, param_types)
+    if not params:
+        return []
+    return [ToolCall.create(tool_name, params)]
+
+
+def _clean_argument_value(value: Any) -> Any:
+    if isinstance(value, str):
+        return strip_dsml(value) if _dsml_present(value) else value
+    if isinstance(value, dict):
+        return {key: _clean_argument_value(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_clean_argument_value(item) for item in value]
+    return value
+
+
+def clean_tool_arguments(arguments: str) -> str:
+    if not isinstance(arguments, str) or not _dsml_present(arguments):
+        return arguments
+    try:
+        value = json.loads(arguments)
+    except ValueError:
+        return strip_dsml(arguments)
+    cleaned = _clean_argument_value(value)
+    if cleaned == value:
+        return arguments
+    return dumps_arguments(cleaned)
+
+
+def _clean_call(call: ToolCall) -> ToolCall:
+    cleaned = clean_tool_arguments(call.arguments)
+    if cleaned == call.arguments:
+        return call
+    return ToolCall(call.id, call.name, cleaned)
+
+
 def _parse_dsml_lax_tool_calls(text: str, tool_schemas: dict[str, dict[str, Any]] | None = None) -> tuple[list[ToolCall], str] | None:
     if _DSML_LAX_TAG.search(text) is None:
         return None
@@ -827,6 +914,7 @@ def parse_tool_calls(
             return None
         calls, wrapper = result
         normalized = [ToolCall(call.id, _normalize_call_name(call.name, tool_schemas), call.arguments) for call in calls]
+        normalized = [_clean_call(call) for call in normalized]
         if fix_mode:
             normalized = fix_tool_calls(normalized, tool_schemas, tool_details, fix_mode)
     except RecursionError:
@@ -863,6 +951,7 @@ def parse_tool_calls_debug(
         normalized = [(call, _normalize_call_name(call.name, tool_schemas)) for call in calls]
         renamed = [{"from": call.name, "to": name} for call, name in normalized if call.name != name]
         applied = [ToolCall(call.id, name, call.arguments) for call, name in normalized]
+        applied = [_clean_call(call) for call in applied]
         if tool_details is not None:
             applied = fix_tool_calls(applied, tool_schemas, tool_details, "report", report)
         report["parsed"] = True
@@ -879,7 +968,7 @@ def format_tool_message(tool_calls: list[ToolCall], text: str, reasoning: str | 
         {
             "id": call.id,
             "type": "function",
-            "function": {"name": call.name, "arguments": call.arguments},
+            "function": {"name": call.name, "arguments": clean_tool_arguments(call.arguments)},
         }
         for call in tool_calls
     ]
@@ -906,7 +995,7 @@ def tool_call_deltas(tool_calls: list[ToolCall], text: str | None = None) -> lis
                 ],
             }
         )
-        arguments = call.arguments
+        arguments = clean_tool_arguments(call.arguments)
         if arguments:
             step = max(1, (len(arguments) + 5) // 6)
             for offset in range(0, len(arguments), step):

@@ -18,6 +18,7 @@ from ..api.sse import _sse, _stream_error_sse
 from ..config import settings
 from ..sseutil import StreamStopFilter, split_stop
 from ..tokens import StreamBudget, estimate_tokens, trim_to_tokens
+from ..tools import DsmlFilter, strip_dsml
 from ..usage import record_usage_dict
 from .client import GENERATE_URL, AistudioError, StreamParser, build_contents, build_request, event_parts
 
@@ -152,7 +153,7 @@ async def collect_non_stream(
             if kind == "content":
                 content.append(text)
     joined = "".join(content)
-    text, limit_finish = _apply_limits(joined, max_tokens, stop)
+    text, limit_finish = _apply_limits(strip_dsml(joined), max_tokens, stop)
     finish = "length" if limit_finish == "length" else "stop"
     prompt_text = " ".join(
         part[1]
@@ -212,6 +213,7 @@ async def stream_openai(
     stop_filter = StreamStopFilter(stop_markers) if stop_markers else None
     budget = StreamBudget(max_tokens, trim_to_tokens)
     stop_hit = False
+    content_filter = DsmlFilter()
     prompt_text = " ".join(
         part[1]
         for item in contents
@@ -226,13 +228,12 @@ async def stream_openai(
             async for kind, text in _iter_text(account, contents, model, limits):
                 if kind != "content":
                     continue
-                if stop_filter is None:
-                    piece = text
+                piece = content_filter.feed(text)
+                if stop_filter is not None and not stop_hit:
+                    piece, hit = stop_filter.feed(piece)
+                    stop_hit = stop_hit or hit
                 elif stop_hit:
                     piece = ""
-                else:
-                    piece, hit = stop_filter.feed(text)
-                    stop_hit = stop_hit or hit
                 piece = budget.feed(piece)
                 if piece:
                     content.append(piece)
@@ -245,12 +246,21 @@ async def stream_openai(
             yield line
         return
 
+    tail = content_filter.flush()
     if stop_filter is not None and not stop_hit:
-        tail = budget.feed(stop_filter.flush())
-        if tail:
-            content.append(tail)
-            emitted = True
-            yield _chunk(chunk_id, created, model, {"content": tail})
+        tail, hit = stop_filter.feed(tail)
+        stop_hit = stop_hit or hit
+        if stop_hit:
+            tail = ""
+        else:
+            tail += stop_filter.flush()
+    else:
+        tail = "" if stop_hit else tail
+    tail = budget.feed(tail)
+    if tail:
+        content.append(tail)
+        emitted = True
+        yield _chunk(chunk_id, created, model, {"content": tail})
     if budget.done:
         finish = "length"
     if not emitted:

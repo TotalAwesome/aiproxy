@@ -16,6 +16,7 @@ from ..api.shaping import _apply_stop
 from ..api.sse import _sse, _stream_error_sse
 from ..config import settings
 from ..sseutil import IncrementalSSE
+from ..tools import DsmlFilter, clean_tool_arguments, strip_dsml
 from ..usage import record_usage_dict
 from .client import GigaChatError
 from .messages import build_messages, normalize_finish_reason, normalize_usage, request_body
@@ -57,7 +58,7 @@ def _translate_message(choice: dict) -> dict:
     if not isinstance(message, dict):
         message = {}
     text = message.get("content")
-    out: dict[str, Any] = {"role": "assistant", "content": text if isinstance(text, str) else ""}
+    out: dict[str, Any] = {"role": "assistant", "content": strip_dsml(text) if isinstance(text, str) else ""}
     function_call = message.get("function_call")
     if isinstance(function_call, dict) and function_call.get("name"):
         arguments = function_call.get("arguments")
@@ -70,7 +71,7 @@ def _translate_message(choice: dict) -> dict:
             {
                 "id": call_id,
                 "type": "function",
-                "function": {"name": function_call["name"], "arguments": arguments or "{}"},
+                "function": {"name": function_call["name"], "arguments": clean_tool_arguments(arguments or "{}")},
             }
         ]
     return out
@@ -259,7 +260,7 @@ def _delta_from_event(event: dict) -> tuple[dict, str | None]:
                 "type": "function",
                 "function": {
                     "name": name if isinstance(name, str) else "",
-                    "arguments": arguments if isinstance(arguments, str) else "",
+                    "arguments": clean_tool_arguments(arguments if isinstance(arguments, str) else ""),
                 },
             }
         ]
@@ -314,6 +315,24 @@ async def stream_openai(
         usage_payload: dict | None = None
         emitted = False
         stop_hit = False
+        content_filter = DsmlFilter()
+
+        def pass_content(piece: str, final: bool = False) -> str:
+            nonlocal stop_hit
+            if stop_hit:
+                return ""
+            text = content_filter.flush() if final else content_filter.feed(piece)
+            if stop is None:
+                return text
+            kept = "" if stop_hit else _apply_stop(text, stop)
+            stop_hit = stop_hit or kept != text
+            return kept
+
+        def flush_content() -> Iterator[str]:
+            tail = pass_content("", True)
+            if tail:
+                yield _chunk(chunk_id, created, model, {"content": tail})
+
         try:
             if resp.status_code >= 400:
                 await _raise_upstream(account, resp, await _safe_json(resp))
@@ -323,17 +342,23 @@ async def stream_openai(
                     usage_payload = usage_raw
                 delta, finish = _delta_from_event(event)
                 if delta:
-                    if "content" in delta and stop is not None:
-                        kept = "" if stop_hit else _apply_stop(delta["content"], stop)
-                        stop_hit = stop_hit or kept != delta["content"]
-                        delta["content"] = kept
-                        if not kept:
+                    if "content" in delta:
+                        kept = pass_content(delta["content"])
+                        if kept:
+                            delta["content"] = kept
+                        else:
                             delta.pop("content")
                     if delta:
                         emitted = True
                         yield _chunk(chunk_id, created, model, delta)
                 if finish is not None:
+                    for line in flush_content():
+                        emitted = True
+                        yield line
                     yield _chunk(chunk_id, created, model, {}, normalize_finish_reason(finish))
+            for line in flush_content():
+                emitted = True
+                yield line
         except HTTPException:
             raise
         except httpx.HTTPError as exc:

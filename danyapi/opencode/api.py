@@ -17,6 +17,7 @@ from ..api.shaping import _apply_stop
 from ..api.sse import _sse, _stream_error_sse
 from ..config import settings
 from ..sseutil import IncrementalSSE
+from ..tools import DsmlFilter, clean_tool_arguments, strip_dsml
 from ..usage import record_usage_dict
 from .client import ERROR_STATUS_BY_TYPE, OpenCodeError, error_message, new_request_id
 from .messages import build_messages, normalize_finish_reason, normalize_usage, request_body
@@ -118,7 +119,7 @@ def _tool_calls_of(message: dict) -> list[dict]:
             {
                 "id": call.get("id") or f"call_{uuid.uuid4().hex[:24]}",
                 "type": "function",
-                "function": {"name": function.get("name") or "", "arguments": arguments or "{}"},
+                "function": {"name": function.get("name") or "", "arguments": clean_tool_arguments(arguments or "{}")},
             }
         )
     return out
@@ -129,10 +130,10 @@ def _translate_message(choice: dict) -> dict:
     if not isinstance(message, dict):
         message = {}
     text = message.get("content")
-    out: dict[str, Any] = {"role": "assistant", "content": text if isinstance(text, str) else ""}
+    out: dict[str, Any] = {"role": "assistant", "content": strip_dsml(text) if isinstance(text, str) else ""}
     reasoning = message.get("reasoning_content")
     if isinstance(reasoning, str) and reasoning:
-        out["reasoning_content"] = reasoning
+        out["reasoning_content"] = strip_dsml(reasoning)
     calls = _tool_calls_of(message)
     if calls:
         out["tool_calls"] = calls
@@ -194,6 +195,7 @@ def _delta_from_event(event: dict) -> tuple[dict, str | None]:
                 continue
             function = call.get("function")
             function = function if isinstance(function, dict) else {}
+            raw_arguments = function.get("arguments")
             out.setdefault("tool_calls", []).append(
                 {
                     "index": call.get("index") if isinstance(call.get("index"), int) else 0,
@@ -201,7 +203,7 @@ def _delta_from_event(event: dict) -> tuple[dict, str | None]:
                     "type": "function",
                     "function": {
                         "name": function.get("name") or "",
-                        "arguments": function.get("arguments") if isinstance(function.get("arguments"), str) else "",
+                        "arguments": clean_tool_arguments(raw_arguments if isinstance(raw_arguments, str) else ""),
                     },
                 }
             )
@@ -332,6 +334,28 @@ async def stream_openai(
         usage_payload: dict | None = None
         emitted = False
         stop_hit = False
+        content_filter = DsmlFilter()
+        reasoning_filter = DsmlFilter()
+
+        def pass_content(piece: str, final: bool = False) -> str:
+            nonlocal stop_hit
+            if stop_hit:
+                return ""
+            text = content_filter.flush() if final else content_filter.feed(piece)
+            if stop is None:
+                return text
+            kept = "" if stop_hit else _apply_stop(text, stop)
+            stop_hit = stop_hit or kept != text
+            return kept
+
+        def flush_filters() -> Iterator[str]:
+            tail = pass_content("", True)
+            if tail:
+                yield _chunk(chunk_id, created, model, {"content": tail})
+            tail = reasoning_filter.flush()
+            if tail:
+                yield _chunk(chunk_id, created, model, {"reasoning_content": tail})
+
         try:
             async for event in _iter_sse(resp):
                 usage_raw = event.get("usage")
@@ -339,17 +363,29 @@ async def stream_openai(
                     usage_payload = usage_raw
                 delta, finish = _delta_from_event(event)
                 if delta:
-                    if "content" in delta and stop is not None:
-                        kept = "" if stop_hit else _apply_stop(delta["content"], stop)
-                        stop_hit = stop_hit or kept != delta["content"]
-                        delta["content"] = kept
-                        if not kept:
+                    if "content" in delta:
+                        kept = pass_content(delta["content"])
+                        if kept:
+                            delta["content"] = kept
+                        else:
                             delta.pop("content")
+                    if "reasoning_content" in delta:
+                        kept = reasoning_filter.feed(delta["reasoning_content"])
+                        if kept:
+                            delta["reasoning_content"] = kept
+                        else:
+                            delta.pop("reasoning_content")
                     if delta:
                         emitted = True
                         yield _chunk(chunk_id, created, model, delta)
                 if finish is not None:
+                    for line in flush_filters():
+                        emitted = True
+                        yield line
                     yield _chunk(chunk_id, created, model, {}, normalize_finish_reason(finish))
+            for line in flush_filters():
+                emitted = True
+                yield line
         except HTTPException:
             raise
         except httpx.HTTPError as exc:

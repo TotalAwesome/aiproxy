@@ -22,7 +22,7 @@ from ..api.sse import _sse, _stream_error_sse
 from ..config import settings
 from ..sseutil import StreamStopFilter, split_stop
 from ..tokens import StreamBudget, estimate_tokens, trim_to_tokens
-from ..tools import _choice_name
+from ..tools import DsmlFilter, _choice_name, clean_tool_arguments, strip_dsml
 from ..usage import record_usage_dict
 from . import attest
 from .client import (
@@ -466,11 +466,23 @@ async def _sleep_backoff(attempt: int) -> None:
     await asyncio.sleep(base * (1.0 - RETRY_JITTER + random.random() * RETRY_JITTER))
 
 
+def _clean_call(call: dict) -> dict:
+    function = call.get("function")
+    if not isinstance(function, dict):
+        return call
+    arguments = function.get("arguments")
+    cleaned = clean_tool_arguments(arguments) if isinstance(arguments, str) else arguments
+    if cleaned == arguments:
+        return call
+    return {**call, "function": {**function, "arguments": cleaned}}
+
+
 def _tool_calls_out(event_calls: list[dict], collected: list[dict]) -> list[dict]:
     fresh: list[dict] = []
     for index, call in enumerate(event_calls):
         position = len(collected) + index
-        fresh.append(call if call.get("index") == position else {**call, "index": position})
+        cleaned = _clean_call(call)
+        fresh.append(cleaned if cleaned.get("index") == position else {**cleaned, "index": position})
     collected.extend(fresh)
     return fresh
 
@@ -517,7 +529,7 @@ async def collect_non_stream(
         if event.finish is not None:
             finish = _finish_of(event, event.finish)
 
-    text, limit_finish = _apply_limits("".join(content), max_tokens, stop)
+    text, limit_finish = _apply_limits(strip_dsml("".join(content)), max_tokens, stop)
     if limit_finish == "length":
         finish = "length"
     if tool_calls:
@@ -526,7 +538,7 @@ async def collect_non_stream(
         finish = "content_filter"
     message: dict[str, Any] = {"role": "assistant", "content": text}
     if reasoning:
-        message["reasoning_content"] = "".join(reasoning)
+        message["reasoning_content"] = strip_dsml("".join(reasoning))
     if tool_calls:
         message["tool_calls"] = [{"id": call["id"], "type": "function", "function": call["function"]} for call in tool_calls]
     if sources:
@@ -593,6 +605,8 @@ async def stream_openai(
     stop_filter = StreamStopFilter(stop_markers) if stop_markers else None
     budget = StreamBudget(max_tokens, trim_to_tokens)
     stop_hit = False
+    content_filter = DsmlFilter()
+    reasoning_filter = DsmlFilter()
 
     try:
         async for item in _stream_events(
@@ -609,17 +623,18 @@ async def stream_openai(
                 continue
             event = item
             if event.reasoning:
-                reasoning.append(event.reasoning)
-                emitted = True
-                yield _chunk(chunk_id, created, model, {"reasoning_content": event.reasoning})
+                piece = reasoning_filter.feed(event.reasoning)
+                if piece:
+                    reasoning.append(piece)
+                    emitted = True
+                    yield _chunk(chunk_id, created, model, {"reasoning_content": piece})
             if event.delta:
-                if stop_filter is None:
-                    piece = event.delta
+                piece = content_filter.feed(event.delta)
+                if stop_filter is not None and not stop_hit:
+                    piece, hit = stop_filter.feed(piece)
+                    stop_hit = stop_hit or hit
                 elif stop_hit:
                     piece = ""
-                else:
-                    piece, hit = stop_filter.feed(event.delta)
-                    stop_hit = stop_hit or hit
                 piece = budget.feed(piece)
                 if piece:
                     content.append(piece)
@@ -639,12 +654,26 @@ async def stream_openai(
             yield line
         return
 
+    tail = content_filter.flush()
     if stop_filter is not None and not stop_hit:
-        tail = budget.feed(stop_filter.flush())
-        if tail:
-            content.append(tail)
-            emitted = True
-            yield _chunk(chunk_id, created, model, {"content": tail})
+        tail, hit = stop_filter.feed(tail)
+        stop_hit = stop_hit or hit
+        if stop_hit:
+            tail = ""
+        else:
+            tail += stop_filter.flush()
+    else:
+        tail = "" if stop_hit else tail
+    tail = budget.feed(tail)
+    if tail:
+        content.append(tail)
+        emitted = True
+        yield _chunk(chunk_id, created, model, {"content": tail})
+    tail = reasoning_filter.flush()
+    if tail:
+        reasoning.append(tail)
+        emitted = True
+        yield _chunk(chunk_id, created, model, {"reasoning_content": tail})
     if tool_calls:
         finish = "tool_calls"
     elif budget.done:

@@ -10,6 +10,7 @@ from fastapi import HTTPException
 
 from ..config import settings
 from ..mcp import McpRegistry
+from ..tools import clean_tool_arguments, strip_dsml
 from .schemas import ChatCompletionRequest, ChatMessage
 
 log = logging.getLogger("danyapi.api")
@@ -87,13 +88,29 @@ def _extract_tool_calls(message: dict[str, Any]) -> list[dict[str, Any]]:
     return valid
 
 
+def _clean_message(message: dict[str, Any]) -> dict[str, Any]:
+    content = message.get("content")
+    if isinstance(content, str) and content:
+        message["content"] = strip_dsml(content)
+    reasoning = message.get("reasoning_content")
+    if isinstance(reasoning, str) and reasoning:
+        message["reasoning_content"] = strip_dsml(reasoning)
+    calls = message.get("tool_calls")
+    if isinstance(calls, list):
+        for call in calls:
+            function = call.get("function") if isinstance(call, dict) else None
+            if isinstance(function, dict) and isinstance(function.get("arguments"), str):
+                function["arguments"] = clean_tool_arguments(function["arguments"])
+    return message
+
+
 def _assistant_history_entry(message: dict[str, Any]) -> dict[str, Any]:
     entry: dict[str, Any] = {"role": "assistant", "content": message.get("content") or ""}
     if message.get("tool_calls"):
         entry["tool_calls"] = message["tool_calls"]
     if message.get("reasoning_content"):
         entry["reasoning_content"] = message["reasoning_content"]
-    return entry
+    return _clean_message(entry)
 
 
 def _provider_finish_reason(result: Any) -> str:
@@ -183,7 +200,7 @@ async def run_mcp_chat(req: ChatCompletionRequest, dispatch) -> Any:
         last_result = None
     text = final_message.get("content") or ""
     note = f"\n\n[mcp iteration limit of {registry_iterations()} reached, answer with what you have]"
-    message_out = dict(final_message)
+    message_out = _clean_message(dict(final_message))
     if isinstance(text, str):
         message_out["content"] = (text + note) if text else note.strip()
     else:

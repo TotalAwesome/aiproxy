@@ -591,6 +591,67 @@ async def test_stream_openai_asks_for_usage_only_when_wanted():
     assert json.loads(account2.requests[-1].content)["stream_options"] == {"include_usage": True}
 
 
+_DSML_MARK = "\uff5c\uff5c"
+_DSML_REPLY = f"Here is the plan.\n<{_DSML_MARK}DSML{_DSML_MARK}thinking>secret reasoning</{_DSML_MARK}DSML{_DSML_MARK}thinking>\nAll done."
+_DSML_REASONING = f"why\n<{_DSML_MARK}DSML{_DSML_MARK}thinking>private plan</{_DSML_MARK}DSML{_DSML_MARK}thinking>\nmuch"
+
+
+def _sse_line(delta: dict, finish: str | None = None) -> str:
+    payload = {"id": "c1", "object": "chat.completion.chunk", "choices": [{"index": 0, "delta": delta, "finish_reason": finish}]}
+    return "data: " + json.dumps(payload) + "\n\n"
+
+
+def _joined_content(lines: list[str]) -> str:
+    pieces: list[str] = []
+    for line in lines:
+        if not line.startswith("data: ") or line.strip() == "data: [DONE]":
+            continue
+        payload = json.loads(line[6:])
+        choices = payload.get("choices")
+        if isinstance(choices, list) and choices:
+            pieces.append(choices[0]["delta"].get("content") or "")
+    return "".join(pieces)
+
+
+@pytest.mark.asyncio
+async def test_collect_non_stream_strips_dsml_from_content_reasoning_and_arguments():
+    from danyapi.opencode import api as opencode_api
+
+    arguments = json.dumps({"filePath": f"a<{_DSML_MARK}DSML{_DSML_MARK}thinking>x</{_DSML_MARK}DSML{_DSML_MARK}thinking>b.py"})
+    calls = [{"id": "c1", "type": "function", "function": {"name": "read", "arguments": arguments}}]
+    account = _Account()
+    account.client = _client(httpx.MockTransport(lambda r: httpx.Response(200, json=_completion(_DSML_REPLY, _DSML_REASONING, calls))))
+    result = await opencode_api.collect_non_stream(account=account, messages=[_msg(role="user", content="hi")], model="m")
+    message = result["choices"][0]["message"]
+    assert "DSML" not in message["content"]
+    assert "secret reasoning" not in message["content"]
+    assert "All done." in message["content"]
+    assert "DSML" not in message["reasoning_content"]
+    assert "private plan" not in message["reasoning_content"]
+    assert json.loads(message["tool_calls"][0]["function"]["arguments"]) == {"filePath": "a b.py"}
+
+
+@pytest.mark.asyncio
+async def test_stream_openai_strips_a_dsml_block_split_across_chunks():
+    from danyapi.opencode import api as opencode_api
+
+    closer = f"</{_DSML_MARK}DSML{_DSML_MARK}thinking>"
+    payload = (
+        _sse_line({"content": "before <" + _DSML_MARK + "DS"})
+        + _sse_line({"content": "ML" + _DSML_MARK + "thinking>hidden" + closer + " after"})
+        + _sse_line({}, "stop")
+        + "data: [DONE]\n\n"
+    )
+    account = _Account()
+    account.client = _client(httpx.MockTransport(lambda r: httpx.Response(200, headers={"content-type": "text/event-stream"}, content=payload.encode())))
+    lines = [line async for line in opencode_api.stream_openai(account=account, messages=[_msg(role="user", content="hi")], model="m")]
+    content = _joined_content(lines)
+    assert "DSML" not in content
+    assert "hidden" not in content
+    assert "before" in content
+    assert "after" in content
+
+
 def test_build_messages_folds_system_and_developer_and_maps_function_role():
     built = om.build_messages(
         [

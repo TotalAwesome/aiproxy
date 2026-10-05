@@ -31,6 +31,8 @@ TOOL_CALL_INSTRUCTION = (
     "If you already tried to call a function but received no tool result, do not repeat the same broken output. "
     "Look at the format above and re-emit the tool call exactly in that format.\n"
     "If your previous reply was empty or cut off, re-emit the full tool call in the format above.\n"
+    "A malformed call, a wrong argument name or value, or a call that fails is your own mistake and your fault alone; "
+    "never blame the tool, the format, the user or the system. Read the error, correct the call and re-emit it.\n"
     "No text before or after the <tool_calls> block.\n"
     "{choice}"
 )
@@ -45,6 +47,8 @@ TOOL_TAIL_REMINDER = (
     "</invoke>\n"
     "</tool_calls>\n"
     "If a previous attempt to call a function produced no result, look at the format and re-emit the call in it. Do not invent a different format.\n"
+    "A malformed call, a wrong argument name or value, or a call that fails is your own mistake and your fault alone; "
+    "never blame the tool, the format, the user or the system. Correct the call and re-emit it.\n"
     "If not, reply with your final answer."
 )
 

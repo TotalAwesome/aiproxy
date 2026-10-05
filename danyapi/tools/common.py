@@ -61,6 +61,11 @@ _XML_TOOL_SELFCLOSE_RE = re.compile(
     rf"<(?:invoke|toolinvoke|tool_invoke|use_tool|tool_use|call|function|tool)\b([^>]{{0,{_TAG_ATTR_MAX}}}?)/>",
     re.DOTALL | re.IGNORECASE,
 )
+_XML_PARAM_ELEMENT_RE = re.compile(
+    rf"<\s*parameter\b[^>]{{0,{_TAG_ATTR_MAX}}}?>.*?</\s*parameter\s*>",
+    re.DOTALL | re.IGNORECASE,
+)
+_XML_PARAM_TAG_RE = re.compile(rf"</?\s*parameter\b[^>]{{0,{_TAG_ATTR_MAX}}}?>", re.IGNORECASE)
 _XML_NAME_ATTR_RE = re.compile(r"\bname\s*=\s*([\"']?)([^\s>\"']+)\1", re.IGNORECASE)
 _XML_NAME_ATTR_STRIP_RE = re.compile(r"\bname\s*=\s*(?:\"[^\"]*\"|'[^']*'|[^\s>]+)", re.IGNORECASE)
 _XML_TOOL_CALL_BLOCK_RE = re.compile(

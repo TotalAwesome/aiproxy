@@ -15,6 +15,7 @@ from ..api.shaping import _apply_limits
 from ..api.sse import _sse, _stream_error_sse
 from ..config import settings
 from ..tokens import estimate_tokens
+from ..tools import strip_dsml
 from ..usage import record_usage_dict
 from .client import AUTH_REJECTED, CONNECT_FATAL, DEFAULT_MODEL, RETRYABLE_ERRORS, AliceError, fold_messages
 
@@ -89,7 +90,7 @@ async def collect_non_stream(
             stream = await _ask(account, text)
         except AliceError as exc:
             raise _translation_error(exc) from exc
-    content, finish = _apply_limits(stream.content, max_tokens, stop)
+    content, finish = _apply_limits(strip_dsml(stream.content), max_tokens, stop)
     usage = _usage_for(text, content)
     record_usage_dict("alice", model, usage, user=user, session_id=session_id)
     return {
@@ -148,7 +149,7 @@ async def stream_openai(
         except AliceError as exc:
             error_lines = _stream_error_sse(chunk_id, created, model, f"Alice error: {exc.message}", session_id)
         else:
-            content, finish = _apply_limits(stream.content, max_tokens, stop)
+            content, finish = _apply_limits(strip_dsml(stream.content), max_tokens, stop)
 
     if error_lines is not None:
         for line in error_lines:

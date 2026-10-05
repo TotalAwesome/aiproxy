@@ -393,6 +393,77 @@ def test_parse_dsml_tool_calls_parameter_named_like_tool():
     assert json.loads(calls[0].arguments) == {"filePath": "p.py", "offset": 6530}
 
 
+def test_parse_xml_tool_calls_unclosed_parameter_named_like_tool():
+    text = (
+        '<tool_calls><invoke name="read"><parameter name="read">'
+        '<parameter name="filePath">p.py</parameter>'
+        '<parameter name="offset">6530</parameter>'
+        '<parameter name="limit">120</parameter>'
+        "</invoke>"
+        '<parameter name="filePath">p.py</parameter>'
+        "</invoke></tool_calls>"
+    )
+    parsed = parse_tool_calls(text, {"read": {"filePath": "string", "offset": "integer", "limit": "integer"}})
+    assert parsed is not None
+    calls, wrapper = parsed
+    assert calls is not None
+    assert len(calls) == 1
+    assert calls[0].name == "read"
+    assert json.loads(calls[0].arguments) == {"filePath": "p.py", "offset": 6530, "limit": 120}
+    assert wrapper == ""
+
+
+def test_parse_xml_tool_calls_bare_parameters_named_like_tool():
+    text = (
+        '<parameter name="read">'
+        '<parameter name="filePath" string="true">p.py</parameter>'
+        '<parameter name="offset">6530</parameter>'
+        '<parameter name="limit">120</parameter>'
+        "</invoke>"
+        '<parameter name="filePath">p.py</parameter>'
+        "</invoke>"
+    )
+    parsed = parse_tool_calls(text, {"read": {"filePath": "string", "offset": "integer", "limit": "integer"}})
+    assert parsed is not None
+    calls, wrapper = parsed
+    assert calls is not None
+    assert len(calls) == 1
+    assert calls[0].name == "read"
+    assert json.loads(calls[0].arguments) == {"filePath": "p.py", "offset": 6530, "limit": 120}
+    assert wrapper == ""
+
+
+def test_parse_xml_tool_calls_bare_parameters_inferred_from_schema():
+    text = '<parameter name="filePath">p.py</parameter><parameter name="offset">6530</parameter>'
+    parsed = parse_tool_calls(text, {"read": {"filePath": "string", "offset": "integer"}, "write": {"path": "string", "body": "string"}})
+    assert parsed is not None
+    calls, wrapper = parsed
+    assert calls is not None
+    assert len(calls) == 1
+    assert calls[0].name == "read"
+    assert json.loads(calls[0].arguments) == {"filePath": "p.py", "offset": 6530}
+    assert wrapper == ""
+
+
+def test_parse_xml_tool_calls_bare_parameters_inside_prose_stay_text():
+    text = 'Use <parameter name="offset">6530</parameter> inside the invoke block.'
+    assert parse_tool_calls(text, {"read": {"filePath": "string", "offset": "integer"}}) is None
+
+
+def test_parse_tool_calls_strips_dsml_from_arguments():
+    text = '<tool_calls><invoke name="read"><parameter name="filePath">a<||DSML||thinking>secret</||DSML||thinking>b.py</parameter></invoke></tool_calls>'
+    parsed = parse_tool_calls(text, {"read": {"filePath": "string"}})
+    assert parsed is not None
+    calls, _ = parsed
+    assert json.loads(calls[0].arguments) == {"filePath": "a b.py"}
+
+
+def test_tool_call_prompt_puts_tool_failures_on_the_model():
+    schema = render_tool_schema([WEATHER_TOOL])
+    assert schema is not None
+    assert "your own mistake and your fault alone" in schema
+
+
 def test_parse_xml_tool_calls_xml_entities():
     text = '<tool_calls><invoke name="bash"><command>echo &quot;a&quot; &amp; b</command></invoke></tool_calls>'
     parsed = parse_tool_calls(text)
