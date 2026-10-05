@@ -113,9 +113,14 @@ Credentials:
 | `DUCKAI_ACCOUNTS` | `1` | Concurrent Duck.ai connections, `1` to `4` |
 | `MISTRAL_ENABLED` | empty | `1` enables the unofficial Mistral Le Chat provider, see the warning below |
 | `MISTRAL_LOGINS` | empty | Comma-separated Le Chat accounts as `email:password`, one client per login |
+| `AISTUDIO_ENABLED` | empty | `1` enables the unofficial Google AI Studio web provider, see the warning below |
+| `AISTUDIO_LOGINS` | empty | Comma-separated Google accounts as `email:password`, one browser per login |
+| `AISTUDIO_HEADLESS` | `1` | `0` shows the browser window, useful for a first manual login |
+| `AISTUDIO_STATE_DIR` | empty | Directory for saved browser states, empty means the cache directory |
+| `AISTUDIO_DOH_URL` | `https://xbox-dns.ru/dns-query` | DNS-over-HTTPS resolver used for Google hosts, empty disables it |
 | `BYOK` / `BYOK_MODE` / `DANYAPI_BYOK_MODE` | empty | `1` runs in bring-your-own-key mode: DeepSeek, Qwen, GigaChat, OpenCode Zen and Mistral requests supply their own key or login, Alice and Duck.ai need none. For Mistral the key is a Le Chat `email:password` pair, several can be sent comma-separated. The first name that is set wins. `GET /health` reports every provider as enabled and reports the per-key pools |
 | `DANYAPI_ADMIN_TOKEN` | empty | Bearer token required by `POST /v1/tokens`, empty keeps that endpoint disabled |
-| `DANYAPI_DISABLED_PROVIDERS` | empty | Comma-separated provider names (`deepseek`, `qwen`, `gigachat`, `opencode`, `alice`, `duckai`, `mistral`) to turn off completely |
+| `DANYAPI_DISABLED_PROVIDERS` | empty | Comma-separated provider names (`deepseek`, `qwen`, `gigachat`, `opencode`, `alice`, `duckai`, `mistral`, `aistudio`) to turn off completely |
 | `MCP_SERVERS` | empty | Comma-separated MCP servers as `name=command` for stdio or `name=url` for streamable HTTP, up to 16. Used for server-side tool execution, see the MCP section |
 | `DANYAPI_MCP_SEARCH_ENABLED` | empty | `1` adds the built-in keyless DuckDuckGo `web_search` tool, see the MCP section |
 | `DANYAPI_MCP_ITERATIONS` | `8` | How many model rounds a server-side MCP chat may take, 1 to 16 |
@@ -227,6 +232,27 @@ Read this before enabling it. Mistral has no public API for this, so the provide
 
 Differences from the OpenAI API to keep in mind: the endpoint is stateless per request, so the whole conversation is folded into one prompt with XML role tags, and system and developer messages are folded into its head; there is no `n`, `top_p`, penalty, `logprobs` or `top_logprobs` support; file attachments are rejected; the model named in the request is echoed back because Le Chat picks its own serving model; and there is no usage accounting upstream, so token counts are estimated from the text. Tool calls are emulated through prompt injection: tools are described in the prompt and a `<tool-call>` reply is parsed back into `tool_calls`.
 
+## Google AI Studio, unofficial
+
+The AI Studio web chat at `https://aistudio.google.com` is served through its internal MakerSuiteService RPC. Requests need a Google account session plus a BotGuard attestation token that is bound to the prompt text, so the provider drives a real Camoufox browser: it logs in with an account, runs the AI Studio front end, and mints one token per request. Chat traffic itself goes over `alkaliMakerSuite` with a DNS-over-HTTPS resolver, because the RPC answers `403 Region not supported` when the host resolves to some Google edges.
+
+Read this before enabling it. Google has no public API for this, so the provider speaks an undocumented internal protocol of a consumer service, and the BotGuard gate is an anti-abuse mechanism; the provider does not bypass it, it runs the same front end a browser runs. Google reshapes this protocol without notice, so the provider can break at any time. It is disabled unless you set `AISTUDIO_ENABLED=1` and at least one `AISTUDIO_LOGINS` entry, which is your acknowledgement of the above.
+
+```bash
+AISTUDIO_ENABLED=1
+AISTUDIO_LOGINS="you@gmail.com:password"
+```
+
+Camoufox is not installed with the base requirements. Install it and its browser once, then set `AISTUDIO_HEADLESS=0` for the first run if the account needs an interactive step and log in by hand; after that the saved state in `AISTUDIO_STATE_DIR` is reused:
+
+```bash
+pip install camoufox
+camoufox fetch
+python app.py
+```
+
+Differences from the OpenAI API to keep in mind: `n`, `seed`, `response_format`, penalties, `logprobs` and `top_logprobs` are rejected; file attachments are rejected; tools in the request are ignored, so a tool-enabled client gets prose back; system and developer messages are folded into the head of the first user message; and there is no usage accounting upstream, so token counts are estimated from the text.
+
 ## Server-side tools, MCP
 
 The server can execute tool calls itself instead of handing them back to the client. Configure it once and any OpenAI compatible client gets working tools, even against providers with no native tool support, because the server runs the tool-call loop and returns a finished answer.
@@ -259,6 +285,7 @@ Model lists are not hardcoded. Every provider is asked where it runs and the ans
 | Duck.ai | the model table in the Duck.ai web bundle, filtered to the free tier | none |
 | Alice | the provider's own aliases, upstream serves no catalog | none |
 | Mistral Le Chat | the provider's own catalog, upstream serves no model list to anonymous sessions | none |
+| AI Studio | `ListModels` on the internal MakerSuiteService RPC | Google account session |
 
 The lists are fetched at startup and refetched every `DANYAPI_MODELS_REFRESH_SECONDS`, and a fetch that fails or comes back empty keeps the last good list rather than emptying `GET /v1/models`. Send `?refresh=1` to `GET /v1/models`, or pass a key in `Authorization` or `x-api-key`, to force a refetch right now and, for GigaChat, to read the list your own key is granted.
 

@@ -24,6 +24,9 @@ from fastapi.staticfiles import StaticFiles
 from starlette.types import Scope
 
 from ..accounts import AccountPool, AccountPoolBusy, DeepSeekAccount
+from ..aistudio.accounts import AistudioAccount, AistudioClient
+from ..aistudio.browser import StudioBrowser
+from ..aistudio.client import AistudioTransport
 from ..alice.accounts import AliceAccount
 from ..alice.client import AliceClient
 from ..config import settings
@@ -142,6 +145,7 @@ async def lifespan(app: FastAPI):
     alice_accounts: list[AliceAccount] = []
     duckai_accounts: list[DuckAIAccount] = []
     mistral_accounts: list[MistralChatAccount] = []
+    aistudio_accounts: list[AistudioAccount] = []
     byok_mode = settings.byok
     app.state.byok = byok_mode
     app.state.byok_pools = _blank_byok_state()
@@ -314,6 +318,32 @@ async def lifespan(app: FastAPI):
                 mistral_accounts.append(MistralChatAccount(len(mistral_accounts), mistral_client, stable_id="mistral"))
             if mistral_clients:
                 log.info("mistral accounts ready: %d", len(mistral_accounts))
+            if settings.aistudio_enabled and settings.provider_enabled("aistudio") and settings.aistudio_logins:
+                for login in settings.aistudio_logins:
+                    browser = StudioBrowser(
+                        login=login,
+                        state_dir=settings.aistudio_state_dir,
+                        headless=settings.aistudio_headless,
+                        doh_url=settings.aistudio_doh_url,
+                    )
+                    transport: AistudioTransport | None = None
+                    try:
+                        await browser.start()
+                        transport = AistudioTransport(await browser.cookies(), doh_url=settings.aistudio_doh_url, timeout=settings.timeout)
+                        if not await AistudioClient(browser, transport).check_auth():
+                            await transport.aclose()
+                            await browser.stop()
+                            log.warning("aistudio login %s could not reach the model list, skipping it", login)
+                            continue
+                    except Exception as exc:
+                        if transport is not None:
+                            await transport.aclose()
+                        await browser.stop()
+                        log.warning("aistudio login %s unusable: %s", login, exc)
+                        continue
+                    aistudio_accounts.append(AistudioAccount(len(aistudio_accounts), login, browser, transport, stable_id=_token_stable_id(login)))
+                if aistudio_accounts:
+                    log.info("aistudio accounts ready: %d", len(aistudio_accounts))
         if accounts:
             app.state.pool = AccountPool(
                 accounts,
@@ -355,6 +385,10 @@ async def lifespan(app: FastAPI):
             app.state.mistral_pool = AccountPool(mistral_accounts, label="mistral")
         else:
             app.state.mistral_pool = None
+        if aistudio_accounts:
+            app.state.aistudio_pool = AccountPool(aistudio_accounts, label="aistudio")
+        else:
+            app.state.aistudio_pool = None
         if (
             not accounts
             and not qwen_accounts
@@ -363,11 +397,12 @@ async def lifespan(app: FastAPI):
             and not alice_accounts
             and not duckai_accounts
             and not mistral_accounts
+            and not aistudio_accounts
             and not byok_mode
         ):
             raise RuntimeError(
                 "no valid credentials: set DEEPSEEK_TOKENS, QWEN_TOKENS, GIGACHAT_KEYS, OPENCODE_KEYS, "
-                "ALICE_ENABLED=1, OPENCODE_ENABLED=1, DUCKAI_ENABLED=1 or MISTRAL_ENABLED=1"
+                "ALICE_ENABLED=1, OPENCODE_ENABLED=1, DUCKAI_ENABLED=1, MISTRAL_ENABLED=1 or AISTUDIO_ENABLED=1"
             )
         await refresh_models()
         mcp_registry = McpRegistry()
@@ -387,7 +422,16 @@ async def lifespan(app: FastAPI):
                 await refresh_task
             await mcp_registry.close()
     finally:
-        all_accounts: list[Any] = [*accounts, *qwen_accounts, *gigachat_accounts, *opencode_accounts, *alice_accounts, *duckai_accounts, *mistral_accounts]
+        all_accounts: list[Any] = [
+            *accounts,
+            *qwen_accounts,
+            *gigachat_accounts,
+            *opencode_accounts,
+            *alice_accounts,
+            *duckai_accounts,
+            *mistral_accounts,
+            *aistudio_accounts,
+        ]
         for pool_obj in _iter_pools():
             all_accounts.extend(pool_obj.accounts)
         await _run_lifespan_cleanup(all_accounts)

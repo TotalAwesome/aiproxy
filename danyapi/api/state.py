@@ -10,9 +10,9 @@ from ..store import JsonStore
 
 app = FastAPI(title="DanyAPI")
 
-BYOK_PROVIDERS = ("deepseek", "qwen", "gigachat", "opencode", "alice", "duckai", "mistral")
+BYOK_PROVIDERS = ("deepseek", "qwen", "gigachat", "opencode", "alice", "duckai", "mistral", "aistudio")
 
-KEYLESS_PROVIDERS = ("alice", "duckai")
+KEYLESS_PROVIDERS = ("alice", "duckai", "aistudio")
 
 KEY_OPTIONAL_PROVIDERS = ("opencode",)
 
@@ -24,6 +24,7 @@ MODEL_ATTRS = {
     "alice": "alice_models",
     "duckai": "duckai_models",
     "mistral": "mistral_models",
+    "aistudio": "aistudio_models",
 }
 
 POOL_ATTRS_BY_PROVIDER = {
@@ -34,6 +35,7 @@ POOL_ATTRS_BY_PROVIDER = {
     "alice": "alice_pool",
     "duckai": "duckai_pool",
     "mistral": "mistral_pool",
+    "aistudio": "aistudio_pool",
 }
 
 

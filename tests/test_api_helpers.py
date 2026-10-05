@@ -1199,10 +1199,15 @@ def test_no_credentials_raises():
         patch.object(settings, "duckai_enabled", False),
         patch.object(settings, "mistral_enabled", False),
         patch.object(settings, "mistral_logins", []),
+        patch.object(settings, "aistudio_enabled", False),
+        patch.object(settings, "aistudio_logins", []),
     ):
         with pytest.raises(
             RuntimeError,
-            match="DEEPSEEK_TOKENS, QWEN_TOKENS, GIGACHAT_KEYS, OPENCODE_KEYS, ALICE_ENABLED=1, OPENCODE_ENABLED=1, DUCKAI_ENABLED=1 or MISTRAL_ENABLED=1",
+            match=(
+                "DEEPSEEK_TOKENS, QWEN_TOKENS, GIGACHAT_KEYS, OPENCODE_KEYS, ALICE_ENABLED=1, "
+                "OPENCODE_ENABLED=1, DUCKAI_ENABLED=1, MISTRAL_ENABLED=1 or AISTUDIO_ENABLED=1"
+            ),
         ):
             with TestClient(app):
                 pass

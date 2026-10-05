@@ -14,6 +14,7 @@ from fastapi.responses import StreamingResponse
 
 from .. import tools as toolemu
 from ..accounts import AccountPool, AccountPoolBusy
+from ..aistudio import api as aistudio_api
 from ..alice import api as alice_api
 from ..duckai import api as duckai_api
 from ..gigachat import api as gigachat_api
@@ -42,6 +43,7 @@ CHAT_HANDLERS = {
     "alice": "_chat_completions_alice",
     "duckai": "_chat_completions_duckai",
     "mistral": "_chat_completions_mistral",
+    "aistudio": "_chat_completions_aistudio",
 }
 
 MAX_COMPLETION_PROMPTS = 8
@@ -53,6 +55,7 @@ OPENCODE_UNSUPPORTED_PARAMS = ("n", "logprobs", "top_logprobs")
 ALICE_UNSUPPORTED_PARAMS = ("n", "top_p", "presence_penalty", "frequency_penalty", "logit_bias", "logprobs", "top_logprobs")
 DUCKAI_UNSUPPORTED_PARAMS = ("n", "top_p", "presence_penalty", "frequency_penalty", "logit_bias")
 MISTRAL_UNSUPPORTED_PARAMS = ("n", "top_p", "presence_penalty", "frequency_penalty", "logit_bias", "logprobs", "top_logprobs")
+AISTUDIO_UNSUPPORTED_PARAMS = ("n", "presence_penalty", "frequency_penalty", "logit_bias", "logprobs", "top_logprobs", "seed", "response_format")
 
 _SESSION_OWNERS: OrderedDict[str, str] = OrderedDict()
 MAX_SESSION_OWNERS = 4096
@@ -789,6 +792,53 @@ async def _chat_completions_mistral(req: ChatCompletionRequest, pool: AccountPoo
         return await mistral_api.collect_non_stream(**common)
     except AccountPoolBusy:
         raise HTTPException(429, "all accounts are busy, try again later") from None
+
+
+async def _chat_completions_aistudio(req: ChatCompletionRequest, pool: AccountPool | None = None) -> Any:
+    if pool is None:
+        pool = getattr(app.state, "aistudio_pool", None)
+    if pool is None:
+        raise HTTPException(503, "aistudio provider is not configured (set AISTUDIO_ENABLED=1 and AISTUDIO_LOGINS to enable)")
+
+    if getattr(req, "files", None):
+        raise HTTPException(400, "aistudio does not support file attachments")
+    _reject_unsupported_params(req, "aistudio", AISTUDIO_UNSUPPORTED_PARAMS)
+    account, existing_sid = await _acquire_session_account(pool, req)
+
+    common = {
+        "account": account,
+        "messages": req.messages,
+        "model": req.model,
+        "temperature": getattr(req, "temperature", None),
+        "top_p": getattr(req, "top_p", None),
+        "top_k": _top_k_of(req),
+        "stop": getattr(req, "stop", None),
+        "max_tokens": _max_tokens_of(req),
+        "user": getattr(req, "user", None),
+        "session_id": existing_sid,
+    }
+    if req.stream:
+        return StreamingResponse(
+            _stream_guard(aistudio_api.stream_openai(include_usage=_include_usage(req), **common), req.model),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    try:
+        return await aistudio_api.collect_non_stream(**common)
+    except AccountPoolBusy:
+        raise HTTPException(429, "all accounts are busy, try again later") from None
+
+
+def _top_k_of(req: ChatCompletionRequest) -> int | None:
+    value = getattr(req, "top_k", None)
+    if value is None:
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
 
 
 def _validate_chat_handlers() -> None:

@@ -33,6 +33,7 @@ CREDENTIAL_ENV_NAMES = (
     "DANYAPI_GIGACHAT_SCOPE",
     "OPENCODE_KEYS",
     "MISTRAL_LOGINS",
+    "AISTUDIO_LOGINS",
     "BYOK",
     "BYOK_MODE",
     "DANYAPI_BYOK_MODE",
@@ -48,6 +49,10 @@ _NON_CREDENTIAL_ENV_NAMES = frozenset(
         "DUCKAI_ENABLED",
         "DUCKAI_ACCOUNTS",
         "MISTRAL_ENABLED",
+        "AISTUDIO_ENABLED",
+        "AISTUDIO_HEADLESS",
+        "AISTUDIO_STATE_DIR",
+        "AISTUDIO_DOH_URL",
         "DANYAPI_TIMEOUT",
         "DANYAPI_ACQUIRE_TIMEOUT",
         "DANYAPI_SESSION_CACHE_SIZE",
@@ -72,7 +77,7 @@ _NON_CREDENTIAL_ENV_NAMES = frozenset(
     }
 )
 
-PROVIDER_NAMES = ("deepseek", "qwen", "gigachat", "opencode", "alice", "duckai", "mistral")
+PROVIDER_NAMES = ("deepseek", "qwen", "gigachat", "opencode", "alice", "duckai", "mistral", "aistudio")
 _ENV_NAME_RE = re.compile(r"_env_(?:int|float|positive_float|float_opt|str|list|on|off|first)\(\s*\"([A-Za-z0-9_]+)\"")
 
 
@@ -234,6 +239,11 @@ class Settings:
         self.duckai_accounts = _env_int("DUCKAI_ACCOUNTS", 1, 1, MAX_DUCKAI_ACCOUNTS)
         self.mistral_enabled = _env_on("MISTRAL_ENABLED", "")
         self.mistral_logins = _env_list("MISTRAL_LOGINS")
+        self.aistudio_enabled = _env_on("AISTUDIO_ENABLED", "")
+        self.aistudio_logins = _env_list("AISTUDIO_LOGINS")
+        self.aistudio_headless = not _env_off("AISTUDIO_HEADLESS", "1")
+        self.aistudio_state_dir = _env_str("AISTUDIO_STATE_DIR")
+        self.aistudio_doh_url = _env_str("AISTUDIO_DOH_URL", "https://xbox-dns.ru/dns-query")
         self.byok = _env_first("BYOK", "BYOK_MODE", "DANYAPI_BYOK_MODE").strip().lower() in _TRUE_VALUES
         self.timeout = _env_positive_float("DANYAPI_TIMEOUT", 60.0, MIN_TIMEOUT_SEC)
         self.acquire_timeout = _env_float_opt("DANYAPI_ACQUIRE_TIMEOUT")

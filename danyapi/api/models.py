@@ -8,6 +8,8 @@ from typing import Any
 
 from fastapi import HTTPException, Request
 
+from ..aistudio.client import LIST_MODELS_URL, build_list_models_request
+from ..aistudio.client import parse_models as aistudio_parse_models
 from ..alice.client import MODEL_ALIASES as ALICE_MODEL_IDS
 from ..alice.client import MODEL_NAMES as ALICE_MODEL_NAMES
 from ..config import settings
@@ -265,6 +267,14 @@ async def _fetch_mistral_models(client: MistralChatClient) -> list[dict]:
     return models
 
 
+async def _fetch_aistudio_models(client: Any) -> list[dict]:
+    transport = getattr(client, "transport", None)
+    if transport is None:
+        return []
+    payload = await transport.request(LIST_MODELS_URL, build_list_models_request())
+    return aistudio_parse_models(payload)
+
+
 MODEL_FETCHERS: dict[str, Any] = {
     "deepseek": _fetch_deepseek_models,
     "qwen": _fetch_qwen_models,
@@ -273,6 +283,7 @@ MODEL_FETCHERS: dict[str, Any] = {
     "alice": _fetch_alice_models,
     "duckai": _fetch_duckai_models,
     "mistral": _fetch_mistral_models,
+    "aistudio": _fetch_aistudio_models,
 }
 
 
@@ -491,6 +502,8 @@ def _resolve_provider(model: str) -> str:
         provider = "duckai"
     elif lowered.startswith(("mistral", "magistral", "codestral", "pixtral")) or lowered in _known_ids("mistral"):
         provider = "mistral"
+    elif lowered in _known_ids("aistudio") or lowered.startswith(("gemini", "gemma", "antigravity", "deep-research")):
+        provider = "aistudio"
     elif _is_deepseek_model(lowered):
         provider = "deepseek"
     else:

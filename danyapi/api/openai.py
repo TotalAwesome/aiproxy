@@ -17,6 +17,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingRes
 
 from .. import tools as toolemu
 from ..accounts import AccountPool, DeepSeekAccount, account_lock
+from ..aistudio import api as aistudio_api
 from ..alice import api as alice_api
 from ..alice.accounts import AliceAccount
 from ..alice.client import AliceClient, AliceError
@@ -73,6 +74,7 @@ from .chats import (
     MAX_MESSAGES_PER_REQUEST,
     _acquire_and_build,
     _can_reuse_session,
+    _chat_completions_aistudio,
     _chat_completions_alice,
     _chat_completions_deepseek,
     _chat_completions_duckai,
@@ -221,6 +223,7 @@ from .models import (
     REASONING_SUFFIXES,
     _all_models,
     _default_deepseek_model_type,
+    _fetch_aistudio_models,
     _fetch_alice_models,
     _fetch_deepseek_models,
     _fetch_duckai_models,
@@ -1006,6 +1009,7 @@ __all__ = [
     "_byok_validate",
     "_cached_auth",
     "_can_reuse_session",
+    "_chat_completions_aistudio",
     "_chat_completions_alice",
     "_chat_completions_deepseek",
     "_chat_completions_duckai",
@@ -1048,6 +1052,7 @@ __all__ = [
     "_extract_request_api_key",
     "_extract_request_body",
     "_fake_context_error_body",
+    "_fetch_aistudio_models",
     "_fetch_alice_models",
     "_fetch_deepseek_models",
     "_fetch_duckai_models",
@@ -1139,6 +1144,7 @@ __all__ = [
     "_write_env_tokens_sync",
     "account_lock",
     "add_tokens",
+    "aistudio_api",
     "alice_api",
     "anthropic_api",
     "anthropic_count_tokens",

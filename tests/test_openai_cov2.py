@@ -369,6 +369,7 @@ def test_health_is_admin_gated():
         "alice",
         "duckai",
         "mistral",
+        "aistudio",
         "deepseek_stats",
         "qwen_stats",
         "gigachat_stats",
@@ -376,6 +377,7 @@ def test_health_is_admin_gated():
         "alice_stats",
         "duckai_stats",
         "mistral_stats",
+        "aistudio_stats",
     }
     assert with_token.json()["deepseek"] is False
     assert with_token.json()["deepseek_stats"] is None
@@ -390,7 +392,7 @@ def test_health_reports_the_byok_detail_to_an_admin():
     client = TestClient(app)
     detail = client.get("/health", headers={"x-api-key": settings.admin_token}).json()
     assert detail["byok"] is True
-    assert detail["byok_pools"] == {"deepseek": 2, "qwen": 0, "gigachat": 0, "opencode": 0, "alice": 0, "duckai": 0, "mistral": 0}
+    assert detail["byok_pools"] == {"deepseek": 2, "qwen": 0, "gigachat": 0, "opencode": 0, "alice": 0, "duckai": 0, "mistral": 0, "aistudio": 0}
     assert detail["byok_api_key_required"] == {
         "deepseek": True,
         "qwen": True,
@@ -399,6 +401,7 @@ def test_health_reports_the_byok_detail_to_an_admin():
         "alice": False,
         "duckai": False,
         "mistral": True,
+        "aistudio": False,
     }
     assert detail["deepseek"] is True
     assert detail["alice_stats"] == {"pools": 1, "accounts": 0, "healthy": 1, "broken": 0, "models": 0}
