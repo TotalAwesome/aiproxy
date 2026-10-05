@@ -401,7 +401,7 @@ def test_health_reports_the_byok_detail_to_an_admin():
         "alice": False,
         "duckai": False,
         "mistral": True,
-        "aistudio": False,
+        "aistudio": True,
     }
     assert detail["deepseek"] is True
     assert detail["alice_stats"] == {"pools": 1, "accounts": 0, "healthy": 1, "broken": 0, "models": 0}

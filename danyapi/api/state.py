@@ -12,7 +12,7 @@ app = FastAPI(title="DanyAPI")
 
 BYOK_PROVIDERS = ("deepseek", "qwen", "gigachat", "opencode", "alice", "duckai", "mistral", "aistudio")
 
-KEYLESS_PROVIDERS = ("alice", "duckai", "aistudio")
+KEYLESS_PROVIDERS = ("alice", "duckai")
 
 KEY_OPTIONAL_PROVIDERS = ("opencode",)
 

@@ -537,6 +537,13 @@ async def _build_byok_pool(provider: str, tokens: list[str], scope: str | None) 
         pool = AccountPool(accounts, label="mistral")
         await refresh_provider_models("mistral", accounts[0].client)
         return pool, created
+    if provider == "aistudio":
+        accounts = await _byok_aistudio_accounts(tokens, "byok")
+        if not accounts:
+            raise _no_valid_key(provider, _auth_indeterminate_count() - before)
+        pool = AccountPool(accounts, label="aistudio")
+        await refresh_provider_models("aistudio", accounts[0].client)
+        return pool, created
     raise HTTPException(400, f"provider {provider} does not accept a caller supplied api key")
 
 
@@ -563,8 +570,6 @@ async def _byok_pool(provider: str, tokens: list[str]) -> AccountPool:
         return await _byok_alice_pool()
     if provider == "duckai":
         return await _byok_duckai_pool()
-    if provider == "aistudio":
-        return await _byok_aistudio_pool()
     pools = _byok_pools_state()
     cache = pools[provider]
     cache_key = _byok_cache_key(tokens)
@@ -706,11 +711,15 @@ async def _byok_duckai_pool() -> AccountPool:
         return created
 
 
-async def _byok_aistudio_accounts() -> list[AistudioAccount]:
+async def _byok_aistudio_accounts(tokens: list[str], log_prefix: str) -> list[AistudioAccount]:
+    log.debug("%s aistudio login set received with %d login(s)", log_prefix, len(tokens))
+    for token in tokens:
+        if ":" not in token or not token.partition(":")[0].strip() or not token.partition(":")[2]:
+            raise HTTPException(400, "aistudio api key must be an email:password pair")
     accounts: list[AistudioAccount] = []
-    for login in settings.aistudio_logins:
+    for token in tokens:
         browser = StudioBrowser(
-            login=login,
+            login=token,
             state_dir=settings.aistudio_state_dir,
             headless=settings.aistudio_headless,
             doh_url=settings.aistudio_doh_url,
@@ -720,45 +729,24 @@ async def _byok_aistudio_accounts() -> list[AistudioAccount]:
             await browser.start()
             transport = AistudioTransport(await browser.cookies(), doh_url=settings.aistudio_doh_url, timeout=settings.timeout)
             client = AistudioClient(browser, transport)
-            if not await client.check_auth():
+            if not await _byok_validate("aistudio", token, client):
                 await _close_client(client)
                 continue
-        except BaseException:
+        except asyncio.CancelledError:
+            if transport is not None:
+                await _close_client(AistudioClient(browser, transport))
+            else:
+                await browser.stop()
+            raise
+        except Exception as exc:
+            log.warning("byok aistudio login unusable: %s", exc)
             if transport is not None:
                 await _close_client(AistudioClient(browser, transport))
             else:
                 await browser.stop()
             continue
-        accounts.append(AistudioAccount(len(accounts), login, browser, transport, stable_id=_byok_stable_id(login)))
+        accounts.append(AistudioAccount(len(accounts), token, browser, transport, stable_id=_byok_stable_id(token)))
     return accounts
-
-
-_AISTUDIO_BYOK_LOCK = asyncio.Lock()
-_AISTUDIO_BYOK_POOL: list[AccountPool | None] = [None]
-
-
-async def _byok_aistudio_pool() -> AccountPool:
-    pool = _AISTUDIO_BYOK_POOL[0]
-    if pool is not None and pool.healthy:
-        return pool
-    async with _AISTUDIO_BYOK_LOCK:
-        cached = _AISTUDIO_BYOK_POOL[0]
-        if cached is not None and cached.healthy:
-            return cached
-        if not settings.aistudio_logins:
-            raise HTTPException(503, "aistudio provider is not configured (set AISTUDIO_LOGINS)")
-        accounts = await _byok_aistudio_accounts()
-        if not accounts:
-            raise HTTPException(502, "aistudio accounts are unavailable")
-        created = AccountPool(accounts, label="aistudio")
-        stale = _AISTUDIO_BYOK_POOL[0]
-        _AISTUDIO_BYOK_POOL[0] = created
-        app.state.byok_aistudio_pool = created
-        await _register_keyless_pool("aistudio", created)
-        await refresh_provider_models("aistudio", accounts[0].client)
-        if stale is not None and stale is not created:
-            await _close_pool(stale)
-        return created
 
 
 async def _register_keyless_pool(provider: str, pool: AccountPool) -> None:

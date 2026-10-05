@@ -418,7 +418,7 @@ def test_health_detail_reports_byok_mode():
         "alice": False,
         "duckai": False,
         "mistral": True,
-        "aistudio": False,
+        "aistudio": True,
     }
 
 

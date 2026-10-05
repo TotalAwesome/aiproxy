@@ -118,7 +118,7 @@ Credentials:
 | `AISTUDIO_HEADLESS` | `1` | `0` shows the browser window, useful for a first manual login |
 | `AISTUDIO_STATE_DIR` | empty | Directory for saved browser states, empty means the cache directory |
 | `AISTUDIO_DOH_URL` | `https://xbox-dns.ru/dns-query` | DNS-over-HTTPS resolver used for Google hosts, empty disables it |
-| `BYOK` / `BYOK_MODE` / `DANYAPI_BYOK_MODE` | empty | `1` runs in bring-your-own-key mode: DeepSeek, Qwen, GigaChat, OpenCode Zen and Mistral requests supply their own key or login, Alice and Duck.ai need none. For Mistral the key is a Le Chat `email:password` pair, several can be sent comma-separated. The first name that is set wins. `GET /health` reports every provider as enabled and reports the per-key pools |
+| `BYOK` / `BYOK_MODE` / `DANYAPI_BYOK_MODE` | empty | `1` runs in bring-your-own-key mode: DeepSeek, Qwen, GigaChat, OpenCode Zen, Mistral and AI Studio requests supply their own key or login, Alice and Duck.ai need none. For Mistral the key is a Le Chat `email:password` pair, for AI Studio it is a Google `email:password` pair, several can be sent comma-separated. The first name that is set wins. `GET /health` reports every provider as enabled and reports the per-key pools |
 | `DANYAPI_ADMIN_TOKEN` | empty | Bearer token required by `POST /v1/tokens`, empty keeps that endpoint disabled |
 | `DANYAPI_DISABLED_PROVIDERS` | empty | Comma-separated provider names (`deepseek`, `qwen`, `gigachat`, `opencode`, `alice`, `duckai`, `mistral`, `aistudio`) to turn off completely |
 | `MCP_SERVERS` | empty | Comma-separated MCP servers as `name=command` for stdio or `name=url` for streamable HTTP, up to 16. Used for server-side tool execution, see the MCP section |
