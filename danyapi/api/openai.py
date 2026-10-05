@@ -448,6 +448,15 @@ async def health(request: Request) -> dict:
     return {"status": "ok", **_health_detail(byok_mode, byok_pools)}
 
 
+@app.get("/v1/providers")
+async def providers_status() -> dict:
+    byok_mode = _byok_mode()
+    byok_pools = _byok_pools_state() if byok_mode else {}
+    detail = _health_detail(byok_mode, byok_pools)
+    detail.pop("usage", None)
+    return detail
+
+
 PUBLIC_USAGE_FIELDS = ("totals", "by_model")
 
 
